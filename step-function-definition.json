@@ -1,0 +1,45 @@
+{
+    "Comment": "A Step Function to handle notifications and error handling",
+    "StartAt": "SendVoiceNotification",
+    "States": {
+      "SendVoiceNotification": {
+        "Type": "Task",
+        "Resource": "arn:aws:lambda:your-region:your-account-id:function:sendVoiceNotification",
+        "Next": "SendTextNotification",
+        "Catch": [
+          {
+            "ErrorEquals": ["States.ALL"],
+            "Next": "HandleError"
+          }
+        ]
+      },
+      "SendTextNotification": {
+        "Type": "Task",
+        "Resource": "arn:aws:lambda:your-region:your-account-id:function:sendTextNotification",
+        "Next": "StoreTransaction",
+        "Catch": [
+          {
+            "ErrorEquals": ["States.ALL"],
+            "Next": "HandleError"
+          }
+        ]
+      },
+      "StoreTransaction": {
+        "Type": "Task",
+        "Resource": "arn:aws:lambda:your-region:your-account-id:function:storeTransaction",
+        "End": true,
+        "Catch": [
+          {
+            "ErrorEquals": ["States.ALL"],
+            "Next": "HandleError"
+          }
+        ]
+      },
+      "HandleError": {
+        "Type": "Fail",
+        "Error": "NotificationFailed",
+        "Cause": "One of the notification steps failed."
+      }
+    }
+  }
+  

@@ -1,0 +1,27 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Template to create an serverless DynamoDB table and save transactions for the notification project
+Resources:
+  DynamoDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      # TableName: !FindInMap [EnvironmentConfig, !Ref Environment, TableName]
+      AttributeDefinitions:
+        - AttributeName: TransactionId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: TransactionId
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+  SaveDynamoDBTableNameToSSM:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "${AWS::StackName}-DynamoDBTableSSMParameterName"
+      Type: String
+      Value: !Ref DynamoDBTable
+      Description: "SSM Parameter to store the DynamoDB Table name"
+Outputs:
+  DynamoDBTableName:
+    Description: "Name of the DynamoDB Table"
+    Value: !Ref DynamoDBTable
+    Export:
+      Name: !Sub "${AWS::StackName}-DynamoDBTableName"

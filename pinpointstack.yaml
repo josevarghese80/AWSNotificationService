@@ -1,0 +1,60 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Template to create an Amazon Pinpoint project with voice and text capabilities, including short code registration and saving the Pinpoint Project ID in SSM Parameter Store
+
+Parameters:
+  Environment:
+      Type: String
+      Description: "The environment to deploy to (dev, qa, prod)"
+      AllowedValues:
+        - dev
+        - qa
+        - prod`
+  ShortCode:
+    Type: String
+    Description: "The short code to register for SMS messages"
+Resources:
+  PinpointApp:
+    Type: AWS::Pinpoint::App
+    Properties: 
+      Name: !Sub "${AWS::StackName}-PinpointApp"
+  PinpointIAMRole:
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: '2012-10-17'
+        Statement: 
+          - Effect: Allow
+            Principal: 
+              Service: 
+                - pinpoint.amazonaws.com
+            Action: 
+              - sts:AssumeRole
+      Path: /
+      Policies: 
+        - PolicyName: PinpointPolicy
+          PolicyDocument: 
+            Version: '2012-10-17'
+            Statement: 
+              - Effect: Allow
+                Action: 
+                  - mobiletargeting:*
+                Resource: 
+                  - '*'
+  PinpointSMSChannel:
+    Type: AWS::Pinpoint::SMSChannel
+    Properties: 
+      ApplicationId: !Ref PinpointApp
+      Enabled: true
+      ShortCode: !Ref ShortCode
+  PinpointVoiceChannel:
+    Type: AWS::Pinpoint::VoiceChannel
+    Properties: 
+      ApplicationId: !Ref PinpointApp
+      Enabled: true
+  PinpointSSMParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "${AWS::StackName}-PinpointProjectSSMParameterName"
+      Type: String
+      Value: !Ref PinpointApp
+      Description: "SSM Parameter to store the Pinpoint Project ID"

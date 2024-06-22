@@ -1,0 +1,209 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  Environment:
+    Type: String
+    Description: "The environment to deploy to (dev, qa, prod)"
+    AllowedValues:
+      - dev
+      - qa
+      - prod
+    Default: dev
+
+Mappings:
+  EnvConfig:
+    dev:
+      TableName: "TransactionDynamo-DynamoDBTableSSMParameterName"
+      PinpointAppId: "TestPinpoint-PinpointProjectSSMParameterName"
+      CallerId: "DevCallerId"
+      CodeBucket: codesteppingstones
+      CodeBucketPath: notification
+    qa:
+      TableName: "TransactionDynamo-DynamoDBTableSSMParameterName"
+      PinpointAppId: "TestPinpoint-PinpointProjectSSMParameterName"
+      CallerId: "QaCallerId"
+      CodeBucket: codesteppingstones
+      CodeBucketPath: notification
+    prod:
+      TableName: "TransactionDynamo-DynamoDBTableSSMParameterName"
+      PinpointAppId: "TestPinpoint-PinpointProjectSSMParameterName"
+      CallerId: "ProdCallerId"
+      CodeBucket: codesteppingstones
+      CodeBucketPath: notification
+Resources:
+  NotificationStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      DefinitionS3Location:      
+        Bucket: !FindInMap [EnvConfig, !Ref Environment, CodeBucket]
+        Key: !Sub "${!FindInMap [EnvConfig, !Ref Environment, notification]}-step-function-definition.json"
+      RoleArn: !GetAtt StepFunctionExecutionRole.Arn
+  StepFunctionExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StepFunctionExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                  - dynamodb:PutItem
+                Resource: "*"
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - s3:GetObject
+                  - s3:PutObject
+                  - sns:Publish
+                  - ses:SendEmail
+                  - ses:SendRawEmail
+                  - pinpoint:SendMessages
+                Resource: "*"
+  SendVoiceNotificationLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: sendVoiceNotification.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: nodejs18.x
+      Code:
+        S3Bucket: !FindInMap [EnvConfig, !Ref Environment, CodeBucket]
+        S3Key: !Sub "${!FindInMap [EnvConfig, !Ref Environment, notification]}-sendVoiceNotification.zip"
+      Environment:
+        Variables:
+          TABLE_NAME: !FindInMap [EnvConfig, !Ref Environment, TableName]
+          PINPOINT_APP_ID: !FindInMap [EnvConfig, !Ref Environment, PinpointAppId]
+          CALLER_ID: !FindInMap [EnvConfig, !Ref Environment, CallerId]
+  SendTextNotificationLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: sendTextNotification.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: nodejs18.x
+      Code:
+        S3Bucket: !FindInMap [EnvConfig, !Ref Environment, CodeBucket]
+        S3Key: !Sub "${!FindInMap [EnvConfig, !Ref Environment, notification]}-sendTextNotification.zip"
+      Environment:
+        Variables:
+          TABLE_NAME: !FindInMap [EnvConfig, !Ref Environment, TableName]
+          PINPOINT_APP_ID: !FindInMap [EnvConfig, !Ref Environment, PinpointAppId]
+  StoreTransactionLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: storeTransaction.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: nodejs18.x
+      Code:
+        S3Bucket: !FindInMap [EnvConfig, !Ref Environment, CodeBucket]
+        S3Key: !Sub "${!FindInMap [EnvConfig, !Ref Environment, notification]}-storeTransaction.zip"
+      Environment:
+        Variables:
+          TABLE_NAME: !FindInMap [EnvConfig, !Ref Environment, TableName]
+  ApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: NotificationApi
+
+  ApiGatewayResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: notifications
+      RestApiId: !Ref ApiGateway
+
+  ApiGatewayMethodPost:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      ResourceId: !Ref ApiGatewayResource
+      RestApiId: !Ref ApiGateway
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:states:action/StartExecution
+        Credentials: !GetAtt ApiGatewayExecutionRole.Arn
+        RequestParameters:
+          integration.request.header.Content-Type: "'application/x-amz-json-1.0'"
+        RequestTemplates:
+          application/json: |
+            {
+              "input": "$util.escapeJavaScript($input.json('$'))",
+              "stateMachineArn": "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:NotificationStateMachine"
+            }
+        PassthroughBehavior: WHEN_NO_TEMPLATES
+        IntegrationResponses:
+          - StatusCode: 200
+  ApiGatewayMethodGet:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: GET
+      ResourceId: !Ref ApiGatewayResource
+      RestApiId: !Ref ApiGateway
+      Integration:
+        IntegrationHttpMethod: GET
+        Type: AWS_PROXY
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:dynamodb:action/GetItem
+        Credentials: !GetAtt ApiGatewayExecutionRole.Arn
+        RequestParameters:
+          integration.request.header.Content-Type: "'application/x-amz-json-1.0'"
+        RequestTemplates:
+          application/json: |
+            {
+              "TableName": "YourDynamoDBTableName",
+              "Key": {
+                "TransactionId": {
+                  "S": "$input.params('transactionId')"
+                }
+              }
+            }
+        PassthroughBehavior: WHEN_NO_TEMPLATES
+        IntegrationResponses:
+          - StatusCode: 200
+  ApiGatewayExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ApiGatewayExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                  - dynamodb:GetItem
+                Resource: "*"
