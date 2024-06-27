@@ -129,14 +129,12 @@ Resources:
     Type: AWS::ApiGateway::RestApi
     Properties:
       Name: NotificationApi
-
   ApiGatewayResource:
     Type: AWS::ApiGateway::Resource
     Properties:
       ParentId: !GetAtt ApiGateway.RootResourceId
       PathPart: notifications
       RestApiId: !Ref ApiGateway
-
   ApiGatewayMethodPost:
     Type: AWS::ApiGateway::Method
     Properties:
